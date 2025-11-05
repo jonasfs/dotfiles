@@ -1,2 +1,2 @@
-dotfiles/nvim -> ~/.config/nvim [linux, macos]
-dotfiles/terminals/ghostty/config -> ~/.config/ghostty/config [linux, macos]
+nvim -> ~/.config/nvim [linux, macos]
+terminal/ghostty/config -> ~/.config/ghostty/config [linux, macos]
