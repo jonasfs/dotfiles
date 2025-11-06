@@ -1,79 +1,76 @@
 #!/usr/bin/env python3
 import os
-import platform
+import tarfile
 from pathlib import Path
+from datetime import datetime
 
-def detect_platform():
-    system = platform.system().lower()
-    if "windows" in system:
-        return "windows"
-    elif "darwin" in system:
-        return "macos"
-    else:
-        return "linux"
+SYMLINK_MAP = Path("scripts/common/symlinks.map")
+BACKUP_DIR = Path("backups")
 
-def expand_path(path):
-    return Path(os.path.expandvars(os.path.expanduser(path)))
 
-def create_symlink(source, dest):
-    dest_parent = dest.parent
-    dest_parent.mkdir(parents=True, exist_ok=True)
-
-    if dest.exists() or dest.is_symlink():
-        print(f"⚠️  Skipping existing: {dest}")
-        return
-
-    try:
-        is_dir = source.is_dir()
-        os.symlink(source, dest, target_is_directory=is_dir)
-        print(f"✅ Linked {dest} -> {source}")
-    except OSError as e:
-        print(f"❌ Failed to link {dest}: {e}")
-
-def parse_line(line):
-    """Return (src, dst, [platforms]) or None if comment/invalid."""
-    line = line.strip()
-    if not line or line.startswith("#"):
-        return None
-
-    platforms = []
-    if "[" in line and "]" in line:
-        main, tagpart = line.split("[", 1)
-        platforms = [t.strip().lower() for t in tagpart.strip("[]").split(",")]
-        line = main.strip()
-
+def parse_map_line(line: str):
+    """Extract source and destination from 'src -> dest' format."""
     if "->" not in line:
-        print(f"⚠️  Ignoring invalid line: {line}")
-        return None
+        return None, None
+    src, dest = line.split("->")
+    return src.strip(), Path(os.path.expanduser(dest.strip()))
 
-    src, dst = map(str.strip, line.split("->"))
-    return src, dst, platforms
 
-def main(symlinks_file="symlinks.map"):
-    current_platform = detect_platform()
-    print(f"🖥️  Detected platform: {current_platform}")
+def create_backup():
+    """
+    Creates a timestamped tar.gz backup of pre-existing destination files.
 
-    lines = Path(symlinks_file).read_text().splitlines()
-    for line in lines:
-        parsed = parse_line(line)
-        if not parsed:
-            continue
+    Returns:
+        bool: True if backup successfully created or nothing needed backup,
+              False if an error occurred.
+    """
+    try:
+        # Ensure backup directory exists
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-        src, dst, platforms = parsed
-        if platforms and current_platform not in platforms:
-            continue
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_file = BACKUP_DIR / f"backup_{timestamp}.tar.gz"
 
-        source = expand_path(src).resolve()
-        print(f"source:  {source}")
-        dest = expand_path(dst)
+        # Track if at least one file was added
+        any_backed_up = False
 
-        if not source.exists():
-            print(f"⚠️  Source not found: {source}")
-            continue
+        with tarfile.open(backup_file, "w:gz") as tar:
+            print(f"📦 Backup archive: {backup_file}")
 
-        # create_symlink(source, dest)
+            for line in SYMLINK_MAP.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+
+                src, dest = parse_map_line(line)
+                if not dest or not dest.exists():
+                    continue
+
+                print(f"Found existing file: {dest}")
+                answer = input("Backup this file? [y/N]: ").strip().lower()
+
+                if answer == "y":
+                    tar.add(dest, arcname=dest.relative_to(Path.home()))
+                    print(f"✅ Added to backup: {dest}")
+                    any_backed_up = True
+                else:
+                    print("⏭️ Skipped.")
+
+        if not any_backed_up:
+            backup_file.unlink()  # delete empty tar
+            print("ℹ️ No files were backed up; archive removed.")
+            return True  # Still successful, just no backup needed
+
+        print("\n🎉 Backup completed successfully!")
+        print("🗂️ Restore with:")
+        print(f"    tar -xzf {backup_file} -C $HOME")
+        return True
+
+    except Exception as e:
+        print(f"❌ ERROR: Backup failed: {e}")
+        return False
+
 
 if __name__ == "__main__":
-    import sys
-    file = sys.argv[1] if len(sys.argv) > 1 else "symlinks.map"
-    main(file)
+    success = create_backup()
+    exit(0 if success else 1)
